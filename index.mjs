@@ -3,57 +3,57 @@ import ffmpeg from 'fluent-ffmpeg';
 
 const app = express();
 const PORT = process.env.PORT || 3333;
+const HOST = process.env.HOST || '127.0.0.1';
 
 app.use(express.json());
 
-app.post('/api/convert', (req, res) => {
-    // Extract input parameters from the request
-    const { inputs, inputOptions, outputOptions } = req.body;
+app.disable('x-powered-by');
 
-    console.log(req.body);
-
+const handleCommand = ( options, response ) => {
     // Initialize FFmpeg command
     const command = ffmpeg();
 
-    // Add inputs
-    inputs.forEach( input => command.input( input ) );
+    return new Promise((resolve, reject) => {
+        for (const [optionName, optionValue] of Object.entries(options)) {
+            switch (typeof optionValue) {
+                case "object": // array
+                    optionValue.forEach( value => command?.[optionName]( value ) );
+                    break;
+                default: // string, number
+                    command?.[optionName](optionValue)
+                    break;
+            }
+        }
+    
+        command
+            .on('start', commandLine => {
+                console.log('conversion start:', commandLine);
+            })
+            .on('error', ( error , stdout, stderr ) => {
+                console.error('conversion error:', { stdout, stderr, error });
+                reject( error )
+            })
+            .on('end', resolve )
+            .pipe( response, { end: true } );
+    });
+}
 
-    // Set input options
-    if ( inputOptions ) {
-        inputOptions.forEach( inputOption => command.inputOptions( inputOption ) );
-    }
+app.post('/api', ( request, response ) => {
+    // Extract input parameters from the request
+    const { contentType = "video/mp4", ...options } = request.body;
 
-    // Set output options
-    if ( outputOptions ) {
-        outputOptions.forEach( outputOption => command.outputOptions( outputOption ) );
-    }
+    // Debug
+    console.log( request.body );
 
-    command.output("/tmp/output.mp4");
+    // Assuming MP4 format for the example
+    response.contentType(contentType);
 
-    command
-        .on('start', commandLine => {
-            console.log('FFmpeg command:', commandLine);
-        })
-        .on('error', (err, stdout, stderr) => {
-            console.error('FFmpeg error:', err.message);
-            console.error({
-                stdout, stderr
-            });
-            res.status(500).json({ error: 'Internal server error' });
-        })
-        .on('end', () => {
-            console.log('Conversion complete');
-
-            res
-                .status(200)
-                .sendFile("/tmp/output.mp4");
-        });
-
-    // Stream output to response
-    // command.pipe(res, { end: false });
-    command.run()
+    // Run ffmpeg command
+    handleCommand( options, response )
+        .then( () => console.log('conversion end.') )
+        .catch( error => response.status(500).json({ error: error.message }))
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, HOST, () => {
+    console.log(`ffmpeg-web-api: POST http://${HOST}:${PORT}/api`);
 });
